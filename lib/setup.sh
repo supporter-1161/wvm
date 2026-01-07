@@ -40,6 +40,7 @@ PostDown = iptables -D FORWARD -i %i -j ACCEPT; iptables -D FORWARD -o %i -j ACC
 EOF
     elif [[ "$mode" == "full" ]]; then
         log_message "INFO" "Генерация конфига wg0.conf для режима Full Tunnel."
+        # Используем переданный интерфейс, который теперь чистый
         cat >> "$wg_config_path" << EOF
 PostUp = iptables -A FORWARD -i %i -o $interface -j ACCEPT; iptables -A FORWARD -i $interface -o %i -j ACCEPT; iptables -t nat -A POSTROUTING -s $server_ip/24 -o $interface -j MASQUERADE
 PostDown = iptables -D FORWARD -i %i -o $interface -j ACCEPT; iptables -D FORWARD -i $interface -o %i -j ACCEPT; iptables -t nat -D POSTROUTING -s $server_ip/24 -o $interface -j MASQUERADE
@@ -335,24 +336,29 @@ initial_setup_main() {
     log_message "INFO" "Публичный IP VPS: $SERVER_PUBLIC_IP"
 
     # Публичный интерфейс VPS
-    detected_interface=$(get_public_interface)
+    detected_interface=$(get_public_interface) # Вызов функции без логирования внутри
     if [[ -n "$detected_interface" ]]; then
+        log_message "INFO" "Определен публичный интерфейс: $detected_interface" # Логируем результат снаружи
         read -p "Определен публичный интерфейс: $detected_interface. Использовать его? (Y/n): " confirm_interface
         if [[ $confirm_interface =~ ^[Nn]$ ]]; then
             read -p "Введите публичный интерфейс вручную: " input_interface
             PUBLIC_INTERFACE="$input_interface"
+            log_message "INFO" "Публичный интерфейс (вручную): $PUBLIC_INTERFACE" # Логируем ввод
         else
             PUBLIC_INTERFACE="$detected_interface"
         fi
     else
-        read -p "Не удалось определить публичный интерфейс. Введите его вручную (например, eth0, ens3): " input_interface
+        log_message "WARNING" "Не удалось автоматически определить публичный интерфейс." # Логируем снаружи
+        read -p "Введите публичный интерфейс вручную (например, eth0, ens3): " input_interface
         PUBLIC_INTERFACE="$input_interface"
+        log_message "INFO" "Публичный интерфейс (вручную): $PUBLIC_INTERFACE" # Логируем ввод
     fi
     if [[ -z "$PUBLIC_INTERFACE" ]]; then
         log_message "ERROR" "Публичный интерфейс не может быть пустым."
         return 1
     fi
-    log_message "INFO" "Публичный интерфейс: $PUBLIC_INTERFACE"
+    # Убедимся, что PUBLIC_INTERFACE не содержит лишних символов (на всякий случай)
+    PUBLIC_INTERFACE=$(echo "$PUBLIC_INTERFACE" | tr -d '\r\n')
 
     # Подтверждение
     echo
@@ -363,7 +369,7 @@ initial_setup_main() {
     echo "IP DNS в VPN: $HOME_DNS_WG_IP"
     echo "Домашняя сеть: $HOME_NET"
     echo "Публичный IP VPS: $SERVER_PUBLIC_IP"
-    echo "Публичный интерфейс: $PUBLIC_INTERFACE"
+    echo "Публичный интерфейс: $PUBLIC_INTERFACE" # Выводим чистое значение
     echo
     read -p "Начать настройку с этими параметрами? (y/N): " confirm_setup
     if [[ ! $confirm_setup =~ ^[Yy]$ ]]; then
@@ -375,9 +381,37 @@ initial_setup_main() {
     # Установка WireGuard
     install_wireguard || return $?
 
-    # Создание директорий
+    # --- Создание директорий ПОСЛЕ определения переменных, но ДО их использования ---
+    # В момент вызова install_wireguard переменные WG_* еще не определены,
+    # и они используют значения по умолчанию из functions.sh.
+    # mkdir с пустой строкой в переменной приведет к ошибке.
+    # Но в install_wireguard mkdir не вызывается.
+    # mkdir вызывается в generate_server_keys (с жестким /etc/wireguard) и update_config_file (с жестким /etc/wireguard).
+    # Однако, в add_client (из client_management.sh) используется CLIENTS_DIR, BACKUP_DIR, LOG_FILE.
+    # Их значения по умолчанию определяются ДО загрузки config.env, т.е. до вызова initial_setup_main.
+    # Поэтому, чтобы они были правильными для *всех* последующих вызовов, нужно:
+    # A. Либо обновить config.env ДО создания директорий (но тогда он будет пустым).
+    # B. Либо создать директории ПОСЛЕ обновления config.env.
+    # C. Либо передавать пути как аргументы во все функции.
+    # D. Либо определить пути в initial_setup_main и передать в update_config_file.
+    # Вариант B кажется наиболее подходящим для текущей архитектуры.
+    # Мы создаем директории ПОСЛЕ обновления переменных, но ПЕРЕД их использованием в других местах.
+    # Но update_config_file вызывается в конце. Значит, нужно создать директории в конце initial_setup_main или перед update_config_file.
+    # Лучше всего: создать директории сразу после установки wireguard и до вызова других функций, использующих пути.
+    # Но нам нужно знать правильные пути. Правильные пути - это те, которые будут записаны в config.env.
+    # Для этого нужно определить все переменные (как сделано выше).
+    # Затем, создать директории с этими переменными (если они были определены).
+    # Но в этот момент config.env еще не создан.
+    # Используем значения, которые будут записаны в config.env, т.е. переменные, определенные выше.
+
     log_message "INFO" "Создание необходимых директорий..."
-    mkdir -p "${CLIENTS_DIR:-/etc/wireguard/clients}" "${BACKUP_DIR:-/etc/wireguard/backup}" "${LOG_FILE%/*}"
+    # Используем переменные, определенные выше в initial_setup_main
+    local final_clients_dir="${CLIENTS_DIR:-/etc/wireguard/clients}"
+    local final_backup_dir="${BACKUP_DIR:-/etc/wireguard/backup}"
+    local final_log_file="${LOG_FILE:-/etc/wireguard/logs/setup.log}"
+    local final_log_dir=$(dirname "$final_log_file")
+
+    mkdir -p "$final_clients_dir" "$final_backup_dir" "$final_log_dir"
 
     # Генерация ключей сервера
     generate_server_keys || return $?
@@ -409,4 +443,3 @@ initial_setup_main() {
     echo
     return 0
 }
-

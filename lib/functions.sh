@@ -51,16 +51,16 @@ validate_cidr() {
     fi
 }
 
-# Функция определения публичного интерфейса
+# Функция определения публичного интерфейса (выводит ТОЛЬКО имя интерфейса или пустую строку)
 get_public_interface() {
     # Пытаемся определить интерфейс, используемый для маршрута по умолчанию
     local interface=$(ip route show default | awk '/default/ {print $5; exit}')
     if [[ -n "$interface" ]]; then
-        log_message "INFO" "Определен публичный интерфейс: $interface"
+        # Не выводим лог здесь, только имя интерфейса
         echo "$interface"
     else
-        log_message "WARNING" "Не удалось автоматически определить публичный интерфейс."
-        echo "" # Возвращаем пустую строку
+        # Не выводим лог здесь, только пустую строку
+        echo ""
     fi
 }
 
@@ -96,7 +96,7 @@ get_next_client_ip() {
         done
 
         if [[ "$is_occupied" == false ]]; then
-            log_message "INFO" "Найден свободный IP для клиента: $candidate_ip"
+            # log_message "INFO" "Найден свободный IP для клиента: $candidate_ip" # Логирование не в функции
             echo "$candidate_ip"
             return 0
         fi
@@ -104,7 +104,6 @@ get_next_client_ip() {
         current_num=$((current_num + 1))
     done
 
-    log_message "ERROR" "Не найдено свободных IP-адресов в пуле $start_ip - $end_ip"
+    # log_message "ERROR" "Не найдено свободных IP-адресов в пуле $start_ip - $end_ip" # Логирование не в функции
     return 1
 }
-
