@@ -1,0 +1,10 @@
+[Interface]
+PrivateKey = CLIENT_PRIVATE_KEY
+Address = CLIENT_IP/24
+DNS = HOME_DNS_WG_IP
+
+[Peer]
+PublicKey = SERVER_PUBLIC_KEY
+AllowedIPs = WG_NET, HOME_NET
+Endpoint = SERVER_PUBLIC_IP:WG_PORT
+PersistentKeepalive = 25
