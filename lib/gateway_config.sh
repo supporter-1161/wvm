@@ -148,8 +148,9 @@ EOF
     log_message "INFO" "Генерация конфига для домашнего шлюза: $gateway_config_path"
 
     # Создаем конфиг, вставляя сгенерированный приватный ключ
-    # Используем правильные PostUp/PostDown правила, как в инструкции Шаг 3.3
-    cat > "$gateway_config_path" << EOF
+    # Используем правильные PostUp/PostDown правила, как в инструкции Шаг 3.3, но с %i и раздельными строками
+    # Используем heredoc с cat - чтобы сохранить структуру строк
+    cat > "$gateway_config_path" << 'EOF'
 [Interface]
 PrivateKey = $gw_private_key
 Address = $home_gw_wg_ip/32
@@ -172,6 +173,16 @@ PostDown = iptables -D FORWARD -i $home_gw_lan_iface -o %i -j ACCEPT
 PostDown = iptables -t nat -D POSTROUTING -s $WG_NET -o $home_gw_lan_iface -j MASQUERADE
 
 EOF
+
+    # Теперь заменим переменные внутри файла
+    sed -i "s/\$gw_private_key/$gw_private_key/g" "$gateway_config_path"
+    sed -i "s/\$home_gw_wg_ip/$home_gw_wg_ip/g" "$gateway_config_path"
+    sed -i "s/\$server_public_key/$server_public_key/g" "$gateway_config_path"
+    sed -i "s/\$SERVER_PUBLIC_IP/$SERVER_PUBLIC_IP/g" "$gateway_config_path"
+    sed -i "s/\$WG_PORT/$WG_PORT/g" "$gateway_config_path"
+    sed -i "s/\$WG_NET/$WG_NET/g" "$gateway_config_path"
+    sed -i "s/\$HOME_NET/$HOME_NET/g" "$gateway_config_path"
+    sed -i "s/\$home_gw_lan_iface/$home_gw_lan_iface/g" "$gateway_config_path"
 
     chmod 600 "$gateway_config_path"
     log_message "INFO" "Конфиг для домашнего шлюза '$home_gw_name' создан: $gateway_config_path"
