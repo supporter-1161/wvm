@@ -4,6 +4,8 @@
 
 # --- Внутренние вспомогательные функции для setup.sh ---
 
+# --- Внутренние вспомогательные функции для setup.sh ---
+
 # Функция генерации конфига wg0.conf на основе режима
 generate_wg_config() {
     local mode="$1"
@@ -21,31 +23,30 @@ generate_wg_config() {
         return 1
     fi
 
+    log_message "DEBUG" "Начинаю генерацию wg0.conf. Mode: $mode, Port: $port, ServerIP: $server_ip, Interface: $interface, HomeDNSIP: $home_dns_wg_ip, HomeNet: $home_net"
+
     # Начинаем формировать конфиг
-    cat > "$wg_config_path" << EOF
-[Interface]
+    local config_content="[Interface]
 Address = $server_ip/24
 ListenPort = $port
 PrivateKey = $server_private_key
 
-EOF
+"
 
     # Добавляем PostUp/PostDown правила в зависимости от режима
     if [[ "$mode" == "split" ]]; then
         log_message "INFO" "Генерация конфига wg0.conf для режима Split Tunnel."
-        cat >> "$wg_config_path" << EOF
-PostUp = iptables -A FORWARD -i %i -j ACCEPT; iptables -A FORWARD -o %i -j ACCEPT
+        config_content+="PostUp = iptables -A FORWARD -i %i -j ACCEPT; iptables -A FORWARD -o %i -j ACCEPT
 PostDown = iptables -D FORWARD -i %i -j ACCEPT; iptables -D FORWARD -o %i -j ACCEPT
 
-EOF
+"
     elif [[ "$mode" == "full" ]]; then
         log_message "INFO" "Генерация конфига wg0.conf для режима Full Tunnel."
-        # Используем переданный интерфейс, который теперь чистый
-        cat >> "$wg_config_path" << EOF
-PostUp = iptables -A FORWARD -i %i -o $interface -j ACCEPT; iptables -A FORWARD -i $interface -o %i -j ACCEPT; iptables -t nat -A POSTROUTING -s $server_ip/24 -o $interface -j MASQUERADE
+        # Используем переданный интерфейс, который теперь должен быть чистым
+        config_content+="PostUp = iptables -A FORWARD -i %i -o $interface -j ACCEPT; iptables -A FORWARD -i $interface -o %i -j ACCEPT; iptables -t nat -A POSTROUTING -s $server_ip/24 -o $interface -j MASQUERADE
 PostDown = iptables -D FORWARD -i %i -o $interface -j ACCEPT; iptables -D FORWARD -i $interface -o %i -j ACCEPT; iptables -t nat -D POSTROUTING -s $server_ip/24 -o $interface -j MASQUERADE
 
-EOF
+"
     else
         log_message "ERROR" "Неизвестный режим: $mode"
         return 1
@@ -53,20 +54,36 @@ EOF
 
     # Добавляем пира для домашнего шлюза - это критично и НЕ зависит от режима клиента!
     # Он всегда должен отвечать за WG_IP домашнего шлюза и за HOME_NET.
-    cat >> "$wg_config_path" << EOF
-# Peer: Домашний DNS-сервер / шлюз
-# ВАЖНО: AllowedIPs для этого пира НЕ меняется в зависимости от режима VPS (split/full)
+    # Обратите внимание: PublicKey и AllowedIPs записываются как плейсхолдеры!
+    config_content+="# Peer: Домашний DNS-сервер / шлюз
+# ВАЖНО: Этот пир НЕ для клиента, а для постоянного подключения домашнего шлюза.
+# PublicKey домашнего шлюза должен быть добавлен АДМИНИСТРАТОРОМ вручную в этот файл ПОСЛЕ настройки WVM.
+# Затем нужно перезапустить wg-quick@wg0.
+# AllowedIPs для этого пира НЕ меняется в зависимости от режима VPS (split/full)
 [Peer]
-# PublicKey домашнего шлюза будет добавлен вручную позже
 # PublicKey = <PUBLIC_KEY_OF_HOME_GATEWAY>
-AllowedIPs = $home_dns_wg_ip/32, $home_net
+# AllowedIPs = $home_dns_wg_ip/32, $home_net
+# ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+# ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+# ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+# ЗАМЕНИТЕ ВЫШЕ строчки '# PublicKey = ...' и '# AllowedIPs = ...' на настоящие:
+# PublicKey = ACTUAL_PUBLIC_KEY_HERE
+# AllowedIPs = $home_dns_wg_ip/32, $home_net
+# ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+# ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+# ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-EOF
+"
+
+    log_message "DEBUG" "Сгенерированное содержимое wg0.conf (до записи):\n$config_content"
+
+    # Записываем сгенерированное содержимое в файл
+    echo -n "$config_content" > "$wg_config_path"
 
     log_message "INFO" "Конфиг wg0.conf сгенерирован в $wg_config_path (без клиентов)."
+    log_message "INFO" "НЕ ЗАБУДЬТЕ: Вручную добавить PublicKey домашнего шлюза в $wg_config_path и перезапустить wg-quick@wg0."
     return 0
 }
-
 
 # --- Основные функции ---
 
