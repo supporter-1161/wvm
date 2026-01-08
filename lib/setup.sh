@@ -2,12 +2,60 @@
 
 # --- Функции первоначальной настройки ---
 
-# Генерация конфига wg0.conf на основе режима
-# КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ:
-#  - В конфиге НЕТ ни одного [Peer] без PublicKey
-#  - Домашний шлюз добавляется ТОЛЬКО как комментарий-шаблон
-#  - Реальный [Peer] создаётся отдельной функцией
+# ================================
+# initial_setup_main — ТОЧКА ВХОДА
+# ================================
+initial_setup_main() {
+    log_message "INFO" "Запуск первоначальной настройки WireGuard"
 
+    install_wireguard || return 1
+
+    # Определяем публичный интерфейс
+    PUBLIC_INTERFACE=$(get_public_interface)
+    if [[ -z "$PUBLIC_INTERFACE" ]]; then
+        log_message "ERROR" "Не удалось определить публичный интерфейс"
+        return 1
+    fi
+
+    SERVER_PUBLIC_IP=$(curl -s ifconfig.me)
+    if ! validate_ip "$SERVER_PUBLIC_IP"; then
+        log_message "ERROR" "Не удалось определить публичный IP VPS"
+        return 1
+    fi
+
+    generate_server_keys || return 1
+
+    local server_private_key
+    server_private_key=$(cat "$WG_PRIVATE_KEY_FILE")
+
+    generate_wg_config \
+        "$WG_MODE" \
+        "$WG_PORT" \
+        "$WG_SERVER_IP" \
+        "$server_private_key" \
+        "$HOME_DNS_WG_IP" \
+        "$HOME_NET" \
+        "$PUBLIC_INTERFACE" \
+        "$WG_CONFIG_FILE" || return 1
+
+    enable_ip_forwarding
+    open_firewall_port "$WG_PORT"
+
+    systemctl enable wg-quick@wg0
+    systemctl start wg-quick@wg0 || {
+        log_message "ERROR" "wg-quick@wg0 не смог стартовать"
+        return 1
+    }
+
+    SETUP_COMPLETED="true"
+    save_config
+
+    log_message "INFO" "Первоначальная настройка завершена успешно"
+}
+
+# ================================
+# Генерация wg0.conf
+# ================================
 generate_wg_config() {
     local mode="$1"
     local port="$2"
@@ -50,50 +98,46 @@ PostDown = iptables -D FORWARD -i %i -o $interface -j ACCEPT; \
 EOF
     fi
 
-    # ТОЛЬКО КОММЕНТАРИЙ — НЕ [Peer]
     cat >> "$wg_config_path" <<EOF
 
 # ================= HOME GATEWAY =================
-# Домашний шлюз НЕ добавляется автоматически.
-# WireGuard НЕ допускает [Peer] без PublicKey.
-#
-# Когда публичный ключ шлюза будет известен — добавьте:
+# Домашний шлюз добавляется ПОСЛЕ установки
+# WireGuard не допускает [Peer] без PublicKey
 #
 # [Peer]
 # PublicKey = <HOME_GATEWAY_PUBLIC_KEY>
 # AllowedIPs = $home_dns_wg_ip/32, $home_net
 #
-# После этого выполните:
-#   systemctl restart wg-quick@wg0
+# systemctl restart wg-quick@wg0
 # ================================================
 EOF
 
     chmod 600 "$wg_config_path"
-    log_message "INFO" "wg0.conf успешно сгенерирован: $wg_config_path"
+    log_message "INFO" "wg0.conf создан: $wg_config_path"
 }
 
+# ================================
 # Установка WireGuard
+# ================================
 install_wireguard() {
-    log_message "INFO" "Установка wireguard"
+    log_message "INFO" "Установка WireGuard"
     apt-get update
     apt-get install -y wireguard
 }
 
-# Генерация серверных ключей
+# ================================
+# Генерация ключей сервера
+# ================================
 generate_server_keys() {
     local wg_dir="/etc/wireguard"
-    local private_key_file="${WG_PRIVATE_KEY_FILE:-$wg_dir/private.key}"
-    local public_key_file="${WG_PUBLIC_KEY_FILE:-$wg_dir/public.key}"
-
     mkdir -p "$wg_dir"
     chmod 700 "$wg_dir"
 
     umask 077
-    wg genkey | tee "$private_key_file" | wg pubkey > "$public_key_file"
+    wg genkey | tee "$WG_PRIVATE_KEY_FILE" | wg pubkey > "$WG_PUBLIC_KEY_FILE"
     umask 022
 
-    chmod 600 "$private_key_file" "$public_key_file"
-
+    chmod 600 "$WG_PRIVATE_KEY_FILE" "$WG_PUBLIC_KEY_FILE"
     log_message "INFO" "Серверные ключи сгенерированы"
 }
 
