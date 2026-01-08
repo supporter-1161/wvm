@@ -119,3 +119,10 @@ initial_setup_main() {
     log_message INFO "WireGuard успешно настроен"
 }
 
+
+# ---------- АВТОЗАПУСК ПРИ ПРЯМОМ ВЫЗОВЕ ----------
+# Если файл запущен напрямую, а не через source — выполняем initial_setup_main
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    initial_setup_main
+fi
+
