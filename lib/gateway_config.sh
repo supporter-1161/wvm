@@ -46,12 +46,17 @@ configure_home_gateway() {
         return 1
     fi
 
+    # Запрашиваем LAN интерфейс на шлюзе
+    read -p "Введите имя LAN интерфейса на домашнем шлюзе (по умолчанию eth0): " input_home_gw_lan_iface
+    local home_gw_lan_iface="${input_home_gw_lan_iface:-eth0}"
+
     # Подтверждение
     echo
     echo "Проверьте введенные данные:"
     echo "Имя шлюза: $home_gw_name"
     echo "WireGuard IP шлюза: $home_gw_wg_ip"
     echo "LAN IP шлюза: $home_gw_lan_ip"
+    echo "LAN интерфейс шлюза: $home_gw_lan_iface"
     echo "Порт VPS (из настроек): $WG_PORT"
     echo "Публичный IP VPS (из настроек): $SERVER_PUBLIC_IP"
     echo "Пул VPN (из настроек): $WG_NET"
@@ -108,7 +113,7 @@ configure_home_gateway() {
 
     # Создаем бэкап wg0.conf перед изменением
     cp "$wg_config_path" "$wg_config_path.backup_before_gateway_$(date +%s)"
-    log_message "INFO" "Создан бэкап wg0.conf: $(ls -la $wg_config_path.backup_before_gateway_*)"
+    log_message "INFO" "Создан бэкап wg0.conf: $(ls -la $wg_config_path.backup_before_gateway_* 2>/dev/null | tail -n 1 | awk '{print $NF}')"
 
     # Удаляем старый комментарий (если он есть) и добавляем нового пира в конец файла
     sed -i '/# HOME GATEWAY (добавить позже)/,/AllowedIPs = .*, .*/d' "$wg_config_path"
@@ -143,6 +148,7 @@ EOF
     log_message "INFO" "Генерация конфига для домашнего шлюза: $gateway_config_path"
 
     # Создаем конфиг, вставляя сгенерированный приватный ключ
+    # Используем правильные PostUp/PostDown правила, как в инструкции Шаг 3.3
     cat > "$gateway_config_path" << EOF
 [Interface]
 PrivateKey = $gw_private_key
@@ -156,9 +162,14 @@ AllowedIPs = $WG_NET, $HOME_NET
 PersistentKeepalive = 25
 
 # Правила для проброса трафика из VPN в домашнюю сеть
-# Замените eth0 на реальный LAN интерфейс шлюза (например, br0, lan0)
-PostUp = iptables -A FORWARD -i %i -j ACCEPT; iptables -A FORWARD -o %i -j ACCEPT; iptables -t nat -A POSTROUTING -s $WG_NET -o eth0 -j MASQUERADE
-PostDown = iptables -D FORWARD -i %i -j ACCEPT; iptables -D FORWARD -o %i -j ACCEPT; iptables -t nat -D POSTROUTING -s $WG_NET -o eth0 -j MASQUERADE
+# Замените $home_gw_lan_iface на реальный LAN интерфейс шлюза (например, br0, lan0), если отличается от введенного
+PostUp = iptables -A FORWARD -i %i -o $home_gw_lan_iface -j ACCEPT
+PostUp = iptables -A FORWARD -i $home_gw_lan_iface -o %i -j ACCEPT
+PostUp = iptables -t nat -A POSTROUTING -s $WG_NET -o $home_gw_lan_iface -j MASQUERADE
+
+PostDown = iptables -D FORWARD -i %i -o $home_gw_lan_iface -j ACCEPT
+PostDown = iptables -D FORWARD -i $home_gw_lan_iface -o %i -j ACCEPT
+PostDown = iptables -t nat -D POSTROUTING -s $WG_NET -o $home_gw_lan_iface -j MASQUERADE
 
 EOF
 
@@ -176,11 +187,12 @@ EOF
     echo "2. На домашнем шлюзе:"
     echo "   a. Переместите файл в /etc/wireguard/:"
     echo "      sudo mv /tmp/$gateway_config_filename /etc/wireguard/"
-    echo "   b. Замените 'eth0' в PostUp/PostDown на реальный LAN-интерфейс шлюза (например, br0, lan0)."
+    echo "   b. Убедитесь, что \$home_gw_lan_iface ('$home_gw_lan_iface') - это правильный LAN-интерфейс на шлюзе."
+    echo "      Если нет, отредактируйте $gateway_config_filename и замените '$home_gw_lan_iface' на реальный."
     echo "   c. Запустите интерфейс:"
     echo "      sudo wg-quick up $gateway_config_filename"
     echo "   d. (Опционально) Включите автозапуск:"
-    echo "      sudo systemctl enable wg-quick@$gateway_config_filename"
+    echo "      sudo systemctl enable wg-quick@$gateway_config_filename # или wg-quick@wg0, в зависимости от имени файла"
     echo "3. Проверьте соединение (на VPS):"
     echo "   sudo ./wg-setup.sh -> 'Мониторинг' -> 'Проверить доступ к домашней сети'"
     echo "==============================================="
