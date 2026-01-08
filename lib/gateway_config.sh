@@ -7,8 +7,9 @@
 # --- Основные функции ---
 
 # Функция генерации конфига для домашнего шлюза и обновления wg0.conf на VPS
+# Теперь генерирует ключи на VPS
 configure_home_gateway() {
-    log_message "INFO" "Запуск процедуры настройки домашнего шлюза."
+    log_message "INFO" "Запуск процедуры настройки домашнего шлюза (генерация ключей на VPS)."
 
     # Проверяем, была ли выполнена первоначальная настройка
     if [[ "$SETUP_COMPLETED" != "true" ]]; then
@@ -18,27 +19,19 @@ configure_home_gateway() {
     fi
 
     # Загружаем переменные из config.env, если они еще не были загружены в основном скрипте
-    # (хотя wg-setup.sh должен был их загрузить)
     local wg_config_path="${WG_CONFIG_FILE:-/etc/wireguard/wg0.conf}"
     local server_public_key_file="${WG_PUBLIC_KEY_FILE:-/etc/wireguard/public.key}"
     local server_public_key
     server_public_key=$(cat "$server_public_key_file")
 
     # Запрашиваем параметры у пользователя
-    echo "=== Настройка домашнего шлюза ==="
-    echo "Вам потребуется публичный ключ WireGuard-интерфейса на домашнем шлюзе."
-    echo "Если он еще не сгенерирован, сделайте это на шлюзе командой:"
-    echo "  wg genkey | tee privatekey | wg pubkey > publickey"
-    echo "Затем прочитайте публичный ключ: cat publickey"
-    echo
+    echo "=== Настройка домашнего шлюза (ключ генерируется на VPS) ==="
 
-    read -p "Введите публичный ключ домашнего шлюза: " home_gateway_public_key
-    # Простая проверка формата (32 байта в base64 = 44 символа + ==)
-    if [[ ! "$home_gateway_public_key" =~ ^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw48]=$ ]]; then
-        log_message "ERROR" "Введен некорректный публичный ключ (ожидается 44-символьная строка base64)."
-        return 1
-    fi
+    # Имя для шлюза (для удобства, будет использовано в комментарии и для файла конфига)
+    read -p "Введите имя для домашнего шлюза (по умолчанию home-gateway): " input_home_gw_name
+    local home_gw_name="${input_home_gw_name:-home-gateway}"
 
+    # WireGuard IP для шлюза
     read -p "Введите WireGuard IP для домашнего шлюза (по умолчанию $HOME_DNS_WG_IP): " input_home_gw_wg_ip
     local home_gw_wg_ip="${input_home_gw_wg_ip:-$HOME_DNS_WG_IP}"
     if ! validate_ip "$home_gw_wg_ip"; then
@@ -56,7 +49,7 @@ configure_home_gateway() {
     # Подтверждение
     echo
     echo "Проверьте введенные данные:"
-    echo "Публичный ключ шлюза: $home_gateway_public_key"
+    echo "Имя шлюза: $home_gw_name"
     echo "WireGuard IP шлюза: $home_gw_wg_ip"
     echo "LAN IP шлюза: $home_gw_lan_ip"
     echo "Порт VPS (из настроек): $WG_PORT"
@@ -70,55 +63,89 @@ configure_home_gateway() {
         return 0
     fi
 
+    # --- Генерация ключей для шлюза ---
+    log_message "INFO" "Генерация ключей для домашнего шлюза '$home_gw_name' (IP: $home_gw_wg_ip)."
+
+    # Создаем временные файлы для ключей шлюза
+    local temp_dir
+    temp_dir=$(mktemp -d)
+    if [[ $? -ne 0 ]]; then
+        log_message "ERROR" "Не удалось создать временную папку для ключей шлюза."
+        return 1
+    fi
+
+    local gw_private_key_file="$temp_dir/gateway_private.key"
+    local gw_public_key_file="$temp_dir/gateway_public.key"
+
+    # Генерируем ключи
+    umask 077
+    wg genkey | tee "$gw_private_key_file" | wg pubkey > "$gw_public_key_file"
+    local ret=$?
+    umask 022
+    if [[ $ret -ne 0 ]]; then
+        log_message "ERROR" "Ошибка при генерации ключей для домашнего шлюза '$home_gw_name'."
+        rm -rf "$temp_dir"
+        return $ret
+    fi
+
+    local gw_private_key
+    local gw_public_key
+    gw_private_key=$(cat "$gw_private_key_file")
+    gw_public_key=$(cat "$gw_public_key_file")
+
+    log_message "INFO" "Ключи для домашнего шлюза '$home_gw_name' сгенерированы."
+
     # --- Обновление wg0.conf на VPS ---
-    log_message "INFO" "Обновление wg0.conf ($wg_config_path) для добавления домашнего шлюза."
+    log_message "INFO" "Обновление wg0.conf ($wg_config_path) для добавления домашнего шлюза '$home_gw_name'."
 
     # Проверяем, существует ли уже запись для этого IP (защита от дублирования)
-    if grep -q "# Peer: Home Gateway" "$wg_config_path" && grep -A 10 "# Peer: Home Gateway" "$wg_config_path" | grep -q "$home_gw_wg_ip"; then
-        log_message "WARNING" "Запись для домашнего шлюза с IP $home_gw_wg_ip уже существует в wg0.conf. Обновление пропущено."
-        echo "Предупреждение: Запись для шлюза с IP $home_gw_wg_ip уже существует."
-        # Можно предложить обновить ключ, если IP совпадает, но для простоты пока так.
+    if grep -q "# Peer: $home_gw_name" "$wg_config_path" && grep -A 10 "# Peer: $home_gw_name" "$wg_config_path" | grep -q "$home_gw_wg_ip"; then
+        log_message "WARNING" "Запись для домашнего шлюза '$home_gw_name' с IP $home_gw_wg_ip уже существует в wg0.conf. Обновление пропущено."
+        echo "Предупреждение: Запись для шлюза '$home_gw_name' с IP $home_gw_wg_ip уже существует."
+        rm -rf "$temp_dir"
         return 0
     fi
 
     # Создаем бэкап wg0.conf перед изменением
-    cp "$wg_config_path" "$wg_config_path.backup_before_gateway"
-    log_message "INFO" "Создан бэкап wg0.conf: $wg_config_path.backup_before_gateway"
+    cp "$wg_config_path" "$wg_config_path.backup_before_gateway_$(date +%s)"
+    log_message "INFO" "Создан бэкап wg0.conf: $(ls -la $wg_config_path.backup_before_gateway_*)"
+
+    # Удаляем старый комментарий (если он есть) и добавляем нового пира в конец файла
+    sed -i '/# HOME GATEWAY (добавить позже)/,/AllowedIPs = .*, .*/d' "$wg_config_path"
 
     # Добавляем пира для домашнего шлюза в конец файла
     # ВАЖНО: AllowedIPs для шлюза НЕ зависит от режима клиента, он всегда отвечает за WG_IP и HOME_NET
     cat >> "$wg_config_path" << EOF
 
-# Peer: Home Gateway
+# Peer: $home_gw_name
 [Peer]
-PublicKey = $home_gateway_public_key
+PublicKey = $gw_public_key
 AllowedIPs = $home_gw_wg_ip/32, $HOME_NET
 
 EOF
 
-    log_message "INFO" "Добавлена запись для домашнего шлюза в wg0.conf."
+    log_message "INFO" "Добавлена запись для домашнего шлюза '$home_gw_name' в wg0.conf."
 
     # Применение изменений к работающему интерфейсу
     wg syncconf wg0 <(wg-quick strip wg0)
     if [[ $? -ne 0 ]]; then
-        log_message "ERROR" "Ошибка при применении изменений к интерфейсу wg0. Проверьте конфигурацию и бэкап $wg_config_path.backup_before_gateway."
+        log_message "ERROR" "Ошибка при применении изменений к интерфейсу wg0. Проверьте конфигурацию и бэкап."
+        rm -rf "$temp_dir"
         return 1
     fi
 
     log_message "INFO" "Изменения в wg0.conf применены к интерфейсу wg0."
 
     # --- Генерация конфига для домашнего шлюза ---
-    local gateway_config_filename="wg-home-gateway.conf"
+    local gateway_config_filename="wg-$home_gw_name.conf"
     local gateway_config_path="/etc/wireguard/$gateway_config_filename"
 
     log_message "INFO" "Генерация конфига для домашнего шлюза: $gateway_config_path"
 
-    # Читаем шаблон или создаем напрямую
-    # Для простоты создадим напрямую
+    # Создаем конфиг, вставляя сгенерированный приватный ключ
     cat > "$gateway_config_path" << EOF
 [Interface]
-# Приватный ключ нужно вставить вручную после помещения файла на шлюз
-# PrivateKey = <INSERT_PRIVATE_KEY_HERE_ON_GATEWAY_DEVICE>
+PrivateKey = $gw_private_key
 Address = $home_gw_wg_ip/32
 # DNS = $home_gw_lan_ip # Если хотите, чтобы шлюз использовал свой локальный DNS для запросов от VPS
 
@@ -129,14 +156,17 @@ AllowedIPs = $WG_NET, $HOME_NET
 PersistentKeepalive = 25
 
 # Правила для проброса трафика из VPN в домашнюю сеть
-# Замените eth0 на реальный LAN интерфейс шлюза
+# Замените eth0 на реальный LAN интерфейс шлюза (например, br0, lan0)
 PostUp = iptables -A FORWARD -i %i -j ACCEPT; iptables -A FORWARD -o %i -j ACCEPT; iptables -t nat -A POSTROUTING -s $WG_NET -o eth0 -j MASQUERADE
 PostDown = iptables -D FORWARD -i %i -j ACCEPT; iptables -D FORWARD -o %i -j ACCEPT; iptables -t nat -D POSTROUTING -s $WG_NET -o eth0 -j MASQUERADE
 
 EOF
 
     chmod 600 "$gateway_config_path"
-    log_message "INFO" "Конфиг для домашнего шлюза создан: $gateway_config_path"
+    log_message "INFO" "Конфиг для домашнего шлюза '$home_gw_name' создан: $gateway_config_path"
+
+    # Удаляем временные ключи
+    rm -rf "$temp_dir"
 
     # --- Инструкция пользователю ---
     echo
@@ -144,26 +174,23 @@ EOF
     echo "1. Скопируйте файл конфигурации на ваш домашний шлюз:"
     echo "   scp $gateway_config_path user@home_gateway_ip:/tmp/"
     echo "2. На домашнем шлюзе:"
-    echo "   a. Вставьте приватный ключ WireGuard в файл $gateway_config_filename"
-    echo "      (замените '<INSERT_PRIVATE_KEY_HERE_ON_GATEWAY_DEVICE>'):"
-    echo "      echo 'YOUR_PRIVATE_KEY_HERE' > /etc/wireguard/private.key"
-    echo "      chmod 600 /etc/wireguard/private.key"
-    echo "      # Затем вставьте его в $gateway_config_filename"
-    echo "   b. Переместите файл в /etc/wireguard/:"
+    echo "   a. Переместите файл в /etc/wireguard/:"
     echo "      sudo mv /tmp/$gateway_config_filename /etc/wireguard/"
-    echo "   c. Замените 'eth0' в PostUp/PostDown на реальный LAN-интерфейс шлюза (например, br0, lan0)."
-    echo "   d. Запустите интерфейс:"
+    echo "   b. Замените 'eth0' в PostUp/PostDown на реальный LAN-интерфейс шлюза (например, br0, lan0)."
+    echo "   c. Запустите интерфейс:"
     echo "      sudo wg-quick up $gateway_config_filename"
-    echo "   e. (Опционально) Включите автозапуск:"
+    echo "   d. (Опционально) Включите автозапуск:"
     echo "      sudo systemctl enable wg-quick@$gateway_config_filename"
     echo "3. Проверьте соединение (на VPS):"
     echo "   sudo ./wg-setup.sh -> 'Мониторинг' -> 'Проверить доступ к домашней сети'"
     echo "==============================================="
+    echo "Сгенерированный конфиг для шлюза: $gateway_config_path"
+    echo "Не забудьте обновить интерфейс на шлюзе!"
 }
 
 # --- Основная функция для вызова из главного скрипта ---
 configure_home_gateway_main() {
-    log_message "INFO" "Вызов процедуры настройки домашнего шлюза"
+    log_message "INFO" "Вызов процедуры настройки домашнего шлюза (генерация ключей на VPS)"
     configure_home_gateway
 }
 
