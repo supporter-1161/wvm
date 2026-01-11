@@ -47,7 +47,8 @@ uninstall_wvm() {
         log_uninstall "INFO" "Автозапуск wg-quick@wg0 уже был отключен."
     fi
 
-    # --- 2. Удаление файлов конфигурации и данных ---
+
+        # --- 2. Удаление файлов конфигурации и данных ---
     local wg_dir="/etc/wireguard"
     log_uninstall "INFO" "Удаление файлов из $wg_dir..."
 
@@ -72,6 +73,7 @@ uninstall_wvm() {
             log_uninstall "INFO" "Папка не найдена для удаления: $dir"
         fi
     done
+
 
     # --- 3. Откат изменений в sysctl (IP forwarding) ---
     log_uninstall "INFO" "Попытка отката настройки IP forwarding (/etc/sysctl.conf)..."
