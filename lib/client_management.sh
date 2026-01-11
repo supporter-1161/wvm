@@ -1,5 +1,4 @@
 #!/bin/bash
-
 # --- Функции управления клиентами ---
 
 # --- Внутренние вспомогательные функции для client_management.sh ---
@@ -18,6 +17,9 @@ generate_client_configs() {
     local clients_dir="${CLIENTS_DIR:-/etc/wireguard/clients}"
 
     log_message "INFO" "Генерация конфигов для клиента $name (IP: $client_ip)"
+
+    # --- ГАРАНТИРУЕМ СУЩЕСТВОВАНИЕ ДИРЕКТОРИИ ---
+    mkdir -p "$clients_dir"
 
     local client_split_config="$clients_dir/${name}-split.conf"
     local client_full_config="$clients_dir/${name}-full.conf"
@@ -57,7 +59,6 @@ generate_client_configs() {
 
     # Устанавливаем права
     chmod 600 "$client_split_config" "$client_full_config"
-
     log_message "INFO" "Конфиги клиента $name созданы: $client_split_config, $client_full_config"
 }
 
@@ -126,12 +127,10 @@ add_client() {
     # Добавление пира в wg0.conf
     log_message "INFO" "Добавление пира для $name в $wg_config_path"
     cat >> "$wg_config_path" << EOF
-
 # Peer: $name
 [Peer]
 PublicKey = $client_public_key
 AllowedIPs = $client_ip/32
-
 EOF
 
     # Применение изменений к работающему интерфейсу
@@ -170,7 +169,6 @@ remove_client() {
     # Проверка существования файлов конфигов
     local split_config="$clients_dir/${name}-split.conf"
     local full_config="$clients_dir/${name}-full.conf"
-
     if [[ ! -f "$split_config" ]] && [[ ! -f "$full_config" ]]; then
         log_message "ERROR" "Клиент $name не найден (файлы конфигов отсутствуют)."
         return 1
@@ -202,6 +200,7 @@ remove_client() {
 
     # Удаляем комментарий и следующие за ним строки до следующего [Peer] или конца файла
     sed -i "/# Peer: $name/,/^\[Peer\]/{ /# Peer: $name/!{ /^\[Peer\]/!d; }; /# Peer: $name/p; /^\[Peer\]/d; }" "$wg_config_path"
+
     # Также удаляем пустые строки после удаления
     sed -i '/^$/N;/^\n$/D' "$wg_config_path"
 
@@ -230,7 +229,7 @@ list_clients() {
     # Извлекаем имена из файлов конфигов в clients_dir
     local client_names_in_files
     client_names_in_files=$(find "$clients_dir" -maxdepth 1 -name "*-split.conf" -o -name "*-full.conf" 2>/dev/null | \
-                           sed 's|.*/||' | sed 's/\(-split\|-full\)\.conf$//' | sort -u)
+        sed 's|.*/||' | sed 's/\(-split\|-full\)\.conf$//' | sort -u)
 
     # Объединяем списки и сортируем
     local all_client_names
@@ -244,7 +243,6 @@ list_clients() {
     echo "Список клиентов:"
     printf "%-20s %-15s\n" "Имя" "IP (из wg0.conf)"
     echo "----------------------------------------"
-
     for client_name in $all_client_names; do
         # Пытаемся найти IP этого клиента в wg0.conf
         # Ищем блок [Peer], следующий за # Peer: <name>, и извлекаем AllowedIPs
@@ -252,14 +250,12 @@ list_clients() {
         # Этот sed немного сложнее: находит # Peer: <name>, затем ищет следующий блок [Peer] или конец файла,
         # и в этом диапазоне ищет строку AllowedIPs, извлекая IP/32
         client_ip=$(sed -n "/# Peer: $client_name/,/^# Peer:/p" "$wg_config_path" | \
-                    sed -n "/# Peer: $client_name/,/^# Peer:/p" | \
-                    grep -oP 'AllowedIPs\s*=\s*\K[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/32' | \
-                    head -n 1 | \
-                    sed 's|/32||')
+            grep -oP 'AllowedIPs\s*=\s*\K[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/32' | \
+            head -n 1 | \
+            sed 's|/32||')
         printf "%-20s %-15s\n" "$client_name" "${client_ip:-<не найден в wg0.conf>}"
     done
 }
-
 
 # --- Основное меню управления клиентами ---
 client_management_menu() {
@@ -271,9 +267,7 @@ client_management_menu() {
         echo "3. Показать список клиентов"
         echo "4. Вернуться в главное меню"
         echo "============================="
-
         read -p "Выберите действие (1-4): " choice
-
         case $choice in
             1)
                 log_message "INFO" "Выбран пункт меню: Добавить клиента"
@@ -283,7 +277,7 @@ client_management_menu() {
                 else
                     echo "Имя клиента не может быть пустым."
                 fi
-            ;;
+                ;;
             2)
                 log_message "INFO" "Выбран пункт меню: Удалить клиента"
                 read -p "Введите имя клиента для удаления: " client_name
@@ -292,19 +286,18 @@ client_management_menu() {
                 else
                     echo "Имя клиента не может быть пустым."
                 fi
-            ;;
+                ;;
             3)
                 log_message "INFO" "Выбран пункт меню: Показать список клиентов"
                 list_clients
-            ;;
+                ;;
             4)
                 log_message "INFO" "Возврат в главное меню из управления клиентами"
                 return 0
-            ;;
+                ;;
             *)
                 echo "Неверный выбор. Пожалуйста, введите число от 1 до 4."
-            ;;
+                ;;
         esac
     done
 }
-
