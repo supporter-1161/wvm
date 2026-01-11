@@ -131,7 +131,6 @@ generate_wg_config() {
     local iface="$1"
     local privkey
     privkey=$(cat "$WG_PRIVATE_KEY_FILE")
-
     log_message "INFO" "Генерация $WG_CONFIG_FILE"
 
     cat > "$WG_CONFIG_FILE" <<EOF
@@ -140,12 +139,16 @@ Address = $WG_SERVER_IP/24
 ListenPort = $WG_PORT
 PrivateKey = $privkey
 
-PostUp = iptables -A FORWARD -i %i -o $iface -j ACCEPT; \
-         iptables -A FORWARD -i $iface -o %i -j ACCEPT; \
-         iptables -t nat -A POSTROUTING -s $WG_SERVER_IP/24 -o $iface -j MASQUERADE
-PostDown = iptables -D FORWARD -i %i -o $iface -j ACCEPT; \
-           iptables -D FORWARD -i $iface -o %i -j ACCEPT; \
-           iptables -t nat -D POSTROUTING -s $WG_SERVER_IP/24 -o $iface -j MASQUERADE
+# Правила маршрутизации и NAT
+PostUp = iptables -A FORWARD -i %i -o $iface -j ACCEPT
+PostUp = iptables -A FORWARD -i $iface -o %i -j ACCEPT
+PostUp = iptables -A FORWARD -i %i -o %i -j ACCEPT
+PostUp = iptables -t nat -A POSTROUTING -s $WG_NET -o $iface -j MASQUERADE
+
+PostDown = iptables -D FORWARD -i %i -o $iface -j ACCEPT
+PostDown = iptables -D FORWARD -i $iface -o %i -j ACCEPT
+PostDown = iptables -D FORWARD -i %i -o %i -j ACCEPT
+PostDown = iptables -t nat -D POSTROUTING -s $WG_NET -o $iface -j MASQUERADE
 
 # HOME GATEWAY (добавить позже)
 # [Peer]

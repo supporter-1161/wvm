@@ -161,7 +161,8 @@ PostDown = iptables -t nat -D POSTROUTING -s $WG_NET -o $home_gw_lan_iface -j MA
 [Peer]
 PublicKey = $server_public_key
 Endpoint = $SERVER_PUBLIC_IP:$WG_PORT
-AllowedIPs = $WG_NET, $HOME_NET
+# AllowedIPs = $WG_NET, $HOME_NET
+AllowedIPs = $WG_NET
 PersistentKeepalive = 25
 EOF
 
