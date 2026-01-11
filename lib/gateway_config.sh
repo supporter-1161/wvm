@@ -1,11 +1,9 @@
 #!/bin/bash
-
 # --- Функции для настройки домашнего шлюза ---
 
 # --- Внутренние вспомогательные функции для gateway_config.sh ---
 
 # --- Основные функции ---
-
 # Функция генерации конфига для домашнего шлюза и обновления wg0.conf на VPS
 # Теперь генерирует ключи на VPS
 configure_home_gateway() {
@@ -121,12 +119,10 @@ configure_home_gateway() {
     # Добавляем пира для домашнего шлюза в конец файла
     # ВАЖНО: AllowedIPs для шлюза НЕ зависит от режима клиента, он всегда отвечает за WG_IP и HOME_NET
     cat >> "$wg_config_path" << EOF
-
 # Peer: $home_gw_name
 [Peer]
 PublicKey = $gw_public_key
 AllowedIPs = $home_gw_wg_ip/32, $HOME_NET
-
 EOF
 
     log_message "INFO" "Добавлена запись для домашнего шлюза '$home_gw_name' в wg0.conf."
@@ -144,55 +140,30 @@ EOF
     # --- Генерация конфига для домашнего шлюза ---
     local gateway_config_filename="wg-$home_gw_name.conf"
     local gateway_config_path="/etc/wireguard/$gateway_config_filename"
-
     log_message "INFO" "Генерация конфига для домашнего шлюза: $gateway_config_path"
 
-    # Создаем конфиг, вставляя сгенерированный приватный ключ
-    # Используем правильные PostUp/PostDown правила, как в инструкции Шаг 3.3, но с %i и раздельными строками
-    # Используем heredoc с cat - чтобы сохранить структуру строк
-    # Для замены переменных используем printf и sed с безопасным разделителем (|)
-
-    # Сначала создаем шаблон в переменной, используя placeholder-ы
-    local config_template
-    config_template=$(cat << 'EOF_TEMPLATE'
+    # Создаем корректный конфиг: PostUp/PostDown внутри [Interface], до [Peer]
+    cat > "$gateway_config_path" << EOF
 [Interface]
-PrivateKey = PLACEHOLDER_PRIVATE_KEY
-Address = PLACEHOLDER_WG_IP/32
-# DNS = PLACEHOLDER_LAN_IP # Если хотите, чтобы шлюз использовал свой локальный DNS для запросов от VPS
-
-[Peer]
-PublicKey = PLACEHOLDER_SERVER_PUBLIC_KEY
-Endpoint = PLACEHOLDER_SERVER_PUBLIC_IP:PLACEHOLDER_SERVER_PORT
-AllowedIPs = PLACEHOLDER_WG_NET, PLACEHOLDER_HOME_NET
-PersistentKeepalive = 25
+PrivateKey = $gw_private_key
+Address = $home_gw_wg_ip/32
+# DNS = $home_gw_lan_ip # Если хотите, чтобы шлюз использовал свой локальный DNS для запросов от VPS
 
 # Правила для проброса трафика из VPN в домашнюю сеть
-# Замените PLACEHOLDER_LAN_IFACE на реальный LAN интерфейс шлюза (например, br0, lan0), если отличается от введенного
-PostUp = iptables -A FORWARD -i %i -o PLACEHOLDER_LAN_IFACE -j ACCEPT
-PostUp = iptables -A FORWARD -i PLACEHOLDER_LAN_IFACE -o %i -j ACCEPT
-PostUp = iptables -t nat -A POSTROUTING -s PLACEHOLDER_WG_NET -o PLACEHOLDER_LAN_IFACE -j MASQUERADE
+# Замените $home_gw_lan_iface на реальный LAN интерфейс шлюза (например, br0, lan0), если отличается от введенного
+PostUp = iptables -A FORWARD -i %i -o $home_gw_lan_iface -j ACCEPT
+PostUp = iptables -A FORWARD -i $home_gw_lan_iface -o %i -j ACCEPT
+PostUp = iptables -t nat -A POSTROUTING -s $WG_NET -o $home_gw_lan_iface -j MASQUERADE
+PostDown = iptables -D FORWARD -i %i -o $home_gw_lan_iface -j ACCEPT
+PostDown = iptables -D FORWARD -i $home_gw_lan_iface -o %i -j ACCEPT
+PostDown = iptables -t nat -D POSTROUTING -s $WG_NET -o $home_gw_lan_iface -j MASQUERADE
 
-PostDown = iptables -D FORWARD -i %i -o PLACEHOLDER_LAN_IFACE -j ACCEPT
-PostDown = iptables -D FORWARD -i PLACEHOLDER_LAN_IFACE -o %i -j ACCEPT
-PostDown = iptables -t nat -D POSTROUTING -s PLACEHOLDER_WG_NET -o PLACEHOLDER_LAN_IFACE -j MASQUERADE
-
-EOF_TEMPLATE
-)
-
-    # Записываем шаблон в файл
-    echo "$config_template" > "$gateway_config_path"
-
-    # Теперь заменим placeholder-ы на реальные значения с помощью sed, используя | как разделитель
-    # Это безопасно, так как placeholder-ы не содержат |
-    sed -i "s|PLACEHOLDER_PRIVATE_KEY|$gw_private_key|g" "$gateway_config_path"
-    sed -i "s|PLACEHOLDER_WG_IP|$home_gw_wg_ip|g" "$gateway_config_path"
-    sed -i "s|PLACEHOLDER_LAN_IP|$home_gw_lan_ip|g" "$gateway_config_path"
-    sed -i "s|PLACEHOLDER_SERVER_PUBLIC_KEY|$server_public_key|g" "$gateway_config_path"
-    sed -i "s|PLACEHOLDER_SERVER_PUBLIC_IP|$SERVER_PUBLIC_IP|g" "$gateway_config_path"
-    sed -i "s|PLACEHOLDER_SERVER_PORT|$WG_PORT|g" "$gateway_config_path"
-    sed -i "s|PLACEHOLDER_WG_NET|$WG_NET|g" "$gateway_config_path"
-    sed -i "s|PLACEHOLDER_HOME_NET|$HOME_NET|g" "$gateway_config_path"
-    sed -i "s|PLACEHOLDER_LAN_IFACE|$home_gw_lan_iface|g" "$gateway_config_path"
+[Peer]
+PublicKey = $server_public_key
+Endpoint = $SERVER_PUBLIC_IP:$WG_PORT
+AllowedIPs = $WG_NET, $HOME_NET
+PersistentKeepalive = 25
+EOF
 
     chmod 600 "$gateway_config_path"
     log_message "INFO" "Конфиг для домашнего шлюза '$home_gw_name' создан: $gateway_config_path"
@@ -213,7 +184,7 @@ EOF_TEMPLATE
     echo "   c. Запустите интерфейс:"
     echo "      sudo wg-quick up $gateway_config_filename"
     echo "   d. (Опционально) Включите автозапуск:"
-    echo "      sudo systemctl enable wg-quick@$gateway_config_filename # или wg-quick@wg0, в зависимости от имени файла"
+    echo "      sudo systemctl enable wg-quick@$gateway_config_filename"
     echo "3. Проверьте соединение (на VPS):"
     echo "   sudo ./wg-setup.sh -> 'Мониторинг' -> 'Проверить доступ к домашней сети'"
     echo "==============================================="
@@ -226,4 +197,3 @@ configure_home_gateway_main() {
     log_message "INFO" "Вызов процедуры настройки домашнего шлюза (генерация ключей на VPS)"
     configure_home_gateway
 }
-
