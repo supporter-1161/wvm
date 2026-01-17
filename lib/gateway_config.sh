@@ -131,6 +131,7 @@ local gateway_config_filename="wg-$home_gw_name.conf"
 local gateway_config_path="/etc/wireguard/$gateway_config_filename"
 log_message "INFO" "Генерация конфига для домашнего шлюза: $gateway_config_path"
 # Создаем корректный конфиг: PostUp/PostDown внутри [Interface], до [Peer]
+
 cat > "$gateway_config_path" << EOF
 [Interface]
 PrivateKey = $gw_private_key
@@ -138,12 +139,14 @@ Address = $home_gw_wg_ip/32
 # DNS = $home_gw_lan_ip # Если хотите, чтобы шлюз использовал свой локальный DNS для запросов от VPS
 # Правила для проброса трафика из VPN в домашнюю сеть
 # Замените $home_gw_lan_iface на реальный LAN интерфейс шлюза (например, br0, lan0), если отличается от введенного
+
 PostUp = iptables -A FORWARD -i %i -o $home_gw_lan_iface -j ACCEPT
 PostUp = iptables -A FORWARD -i $home_gw_lan_iface -o %i -j ACCEPT
 PostUp = iptables -t nat -A POSTROUTING -s $WG_NET -o $home_gw_lan_iface -j MASQUERADE
 PostDown = iptables -D FORWARD -i %i -o $home_gw_lan_iface -j ACCEPT
 PostDown = iptables -D FORWARD -i $home_gw_lan_iface -o %i -j ACCEPT
 PostDown = iptables -t nat -D POSTROUTING -s $WG_NET -o $home_gw_lan_iface -j MASQUERADE
+
 [Peer]
 PublicKey = $server_public_key
 Endpoint = $SERVER_PUBLIC_IP:$WG_PORT
@@ -151,6 +154,7 @@ Endpoint = $SERVER_PUBLIC_IP:$WG_PORT
 AllowedIPs = $WG_NET
 PersistentKeepalive = 25
 EOF
+
 chmod 600 "$gateway_config_path"
 log_message "INFO" "Конфиг для домашнего шлюза '$home_gw_name' создан: $gateway_config_path"
 # Удаляем временные ключи
