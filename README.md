@@ -27,10 +27,9 @@ WVM — это bash-скрипт для автоматизированной н�
 
 1.  **Склонируйте репозиторий:**
     ```bash
-    git clone https://github.com/your-username/wireguard-vpn-manager.git
+    git clone https://github.com/supporter-1161/wvm.git
     cd wireguard-vpn-manager
     ```
-    *(Замените `https://github.com/your-username/wireguard-vpn-manager.git` на актуальный URL вашего репозитория)*
 
 2.  **Сделайте скрипт исполняемым:**
     ```bash
