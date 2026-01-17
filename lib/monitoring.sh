@@ -1,11 +1,7 @@
 #!/bin/bash
-
 # --- Функции мониторинга ---
-
-# --- Внутренние вспомогательные функции для monitoring.sh ---
-
+# --- Внутренные вспомогательные функции для monitoring.sh ---
 # --- Основные функции ---
-
 # Показать статус WireGuard
 show_wireguard_status() {
     local interface="wg0"
@@ -39,9 +35,12 @@ show_connected_peers() {
 
 # Проверить доступность домашнего DNS (через ping, если туннель активен)
 check_home_network_access() {
-    # Используем переменную HOME_DNS_WG_IP из config.env, если она загружена
+    # Используем переменные из config.env, если они загружены
     local home_dns_wg_ip="${HOME_DNS_WG_IP:-10.99.0.100}" # Значение по умолчанию на случай, если config.env не загружен
-    log_message "INFO" "Проверка доступности домашнего DNS в VPN ($home_dns_wg_ip)"
+    local home_gw_lan_ip_default="192.168.0.225" # IP LAN шлюза по умолчанию
+    local home_gw_lan_ip="${HOME_GW_LAN_IP:-$home_gw_lan_ip_default}" # Используем из config.env, если задано, иначе по умолчанию
+
+    log_message "INFO" "Проверка доступности домашнего DNS в VPN ($home_dns_wg_ip) и LAN IP шлюза ($home_gw_lan_ip)"
 
     # Проверим, запущен ли интерфейс wg0
     if ! wg show wg0 > /dev/null 2>&1; then
@@ -51,15 +50,24 @@ check_home_network_access() {
     fi
 
     echo "Пингуем $home_dns_wg_ip (домашний DNS через VPN)..."
-    # Пингуем с таймаутом и ограничением количества пакетов
     if ping -c 3 -W 5 "$home_dns_wg_ip" &> /dev/null; then
         log_message "INFO" "Доступ к $home_dns_wg_ip подтвержден."
-        echo "OK: $home_dns_wg_ip отвечает на ping."
+        echo "OK: $home_dns_wg_ip (VPN IP шлюза) отвечает на ping."
     else
         log_message "WARNING" "Нет ответа от $home_dns_wg_ip. Возможны проблемы с доступом к домашней сети через VPN."
-        echo "ПРЕДУПРЕЖДЕНИЕ: $home_dns_wg_ip не отвечает на ping. Проверьте настройки туннеля или состояние домашнего шлюза."
+        echo "ПРЕДУПРЕЖДЕНИЕ: $home_dns_wg_ip (VPN IP шлюза) не отвечает на ping. Проверьте настройки туннеля или состояние домашнего шлюза."
+    fi
+
+    echo "Пингуем $home_gw_lan_ip (LAN IP шлюза)..."
+    if ping -c 3 -W 5 "$home_gw_lan_ip" &> /dev/null; then
+        log_message "INFO" "Доступ к $home_gw_lan_ip подтвержден."
+        echo "OK: $home_gw_lan_ip (LAN IP шлюза) отвечает на ping."
+    else
+        log_message "WARNING" "Нет ответа от $home_gw_lan_ip. Возможны проблемы с доступом к домашней сети или шлюз не отвечает."
+        echo "ПРЕДУПРЕЖДЕНИЕ: $home_gw_lan_ip (LAN IP шлюза) не отвечает на ping. Проверьте состояние домашнего шлюза или его настройки."
     fi
 }
+
 
 # Показать основные маршруты (например, маршрут к домашней сети)
 show_routes() {
@@ -70,7 +78,6 @@ show_routes() {
     echo "--- Таблица маршрутизации (ip route show) ---"
     ip route show
     echo "---------------------------------------------"
-
     echo
     echo "--- Маршрут к домашней сети ($home_net) ---"
     # Показываем конкретный маршрут к домашней сети
@@ -80,7 +87,6 @@ show_routes() {
     fi
     echo "---------------------------------------------"
 }
-
 
 # --- Основное меню мониторинга ---
 monitoring_menu() {
@@ -93,34 +99,32 @@ monitoring_menu() {
         echo "4. Показать маршруты"
         echo "5. Вернуться в главное меню"
         echo "=================="
-
         read -p "Выберите действие (1-5): " choice
 
         case $choice in
             1)
                 log_message "INFO" "Выбран пункт меню: Показать статус WireGuard"
                 show_wireguard_status
-            ;;
+                ;;
             2)
                 log_message "INFO" "Выбран пункт меню: Показать подключенные пиры"
                 show_connected_peers
-            ;;
+                ;;
             3)
                 log_message "INFO" "Выбран пункт меню: Проверить доступ к домашней сети"
                 check_home_network_access
-            ;;
+                ;;
             4)
                 log_message "INFO" "Выбран пункт меню: Показать маршруты"
                 show_routes
-            ;;
+                ;;
             5)
                 log_message "INFO" "Возврат в главное меню из мониторинга"
                 return 0
-            ;;
+                ;;
             *)
                 echo "Неверный выбор. Пожалуйста, введите число от 1 до 5."
-            ;;
+                ;;
         esac
     done
 }
-

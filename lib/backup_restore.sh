@@ -1,11 +1,7 @@
 #!/bin/bash
-
 # --- Функции бэкапа и восстановления ---
-
 # --- Внутренние вспомогательные функции для backup_restore.sh ---
-
 # --- Основные функции ---
-
 # Создание бэкапа
 create_backup() {
     local backup_dir="${BACKUP_DIR:-/etc/wireguard/backup}"
@@ -58,7 +54,29 @@ create_backup() {
         mkdir -p "$backup_path/clients"
     fi
 
-    # 4. Ключи сервера (опционально, но полезно для восстановления)
+    # 4. Конфигурации домашних шлюзов (wg-*.conf)
+    log_message "INFO" "Поиск и копирование конфигураций домашних шлюзов (wg-*.conf)"
+    local gateway_configs_backup_dir="$backup_path/gateway_configs"
+    mkdir -p "$gateway_configs_backup_dir"
+    # Ищем файлы wg-*.conf в /etc/wireguard/, исключая wg0.conf
+    find "$wg_dir" -maxdepth 1 -name "wg-*.conf" ! -name "wg0.conf" -type f -exec cp {} "$gateway_configs_backup_dir/" \;
+
+    local copied_gw_confs
+    copied_gw_confs=$(find "$gateway_configs_backup_dir" -mindepth 1 -maxdepth 1 -name "wg-*.conf" -type f)
+    if [[ -n "$copied_gw_confs" ]]; then
+        log_message "INFO" "Скопированы конфиги домашних шлюзов в $gateway_configs_backup_dir"
+        # Выводим имена скопированных файлов для ясности
+        while IFS= read -r -d '' file; do
+            log_message "DEBUG" "Скопирован файл шлюза: $(basename "$file")"
+        done < <(find "$gateway_configs_backup_dir" -name "wg-*.conf" -print0)
+    else
+        log_message "INFO" "Конфигурации домашних шлюзов (wg-*.conf) не найдены или отсутствуют."
+        # Удаляем пустую папку, если нечего было копировать
+        rmdir "$gateway_configs_backup_dir" 2>/dev/null || true
+    fi
+
+
+    # 5. Ключи сервера (опционально, но полезно для восстановления)
     # ВАЖНО: Эти файлы содержат приватный ключ. Храните бэкапы в безопасности!
     if [[ -f "$private_key_file" ]] && [[ -f "$public_key_file" ]]; then
         # Создаем подпапку для ключей в бэкапе для ясности
@@ -129,6 +147,7 @@ restore_from_backup() {
         log_message "ERROR" "Неверный формат нового публичного IP: $new_server_public_ip"
         return 1
     fi
+
     log_message "INFO" "Будет использован новый IP VPS для обновления конфигов: $new_server_public_ip"
 
     # Останавливаем интерфейс wg0 перед восстановлением
@@ -217,4 +236,3 @@ restore_from_backup_main() {
     log_message "INFO" "Вызов процедуры восстановления из бэкапа"
     restore_from_backup
 }
-
